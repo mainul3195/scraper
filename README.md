@@ -69,6 +69,8 @@ python task1.py input.json
 - Extracts direct video sources (from HTML, iframes, and network requests).
 - Verifies each candidate URL with `yt-dlp --simulate`.
 - Outputs only valid, downloadable video URLs.
+- **Now also supports extracting direct video URLs from Facebook (without scrolling) and all YouTube videos.**
+- **Note:** Upload date extraction is not yet supported for Facebook and YouTube videos.
 
 **Run:**
 ```bash
@@ -118,6 +120,7 @@ python task3.py
 ## 📝 Notes
 - For best results, always use the latest version of `yt-dlp` and `aria2c`.
 - Some sites may require additional handling (e.g., login, cookies, or advanced scraping logic).
+- **Facebook and YouTube video extraction is supported, but upload date extraction is not yet implemented for these platforms.**
 - You can further automate the pipeline by combining the scripts or using a workflow manager.
 
 ---

@@ -1,7 +1,7 @@
 import asyncio
 import json
 from playwright.async_api import async_playwright
-from scrappers import Scraper, LansdaleScraper
+from scrappers import Scraper, LansdaleScraper, FacebookScraper, CharlestonCivicClerkScraper, YouTubeLiveMeetingsScraper
 
 async def main():
     # Read input from input.json
@@ -18,13 +18,22 @@ async def main():
             viewport={'width': 1920, 'height': 1080}
         )
         for base_url in base_urls:
-            # Use Scraper for Detroit, LansdaleScraper for Lansdale
+            # Use Scraper for Detroit, LansdaleScraper for Lansdale, FacebookScraper for Facebook, CharlestonCivicClerkScraper for Charleston, YouTubeLiveMeetingsScraper for YouTube
             if "detroit-vod.cablecast.tv" in base_url:
                 scraper = Scraper(context, start_date, end_date, [base_url])
                 medias = await scraper.scrape_detroit_vod()
             elif "lansdale.org" in base_url:
                 scraper = LansdaleScraper(context, base_url)
                 medias = await scraper.scrape_lansdale_videos()
+            elif "facebook.com/DauphinCountyPA/videos" in base_url:
+                scraper = FacebookScraper(context, base_url)
+                medias = await scraper.scrape_facebook_videos()
+            elif "charlestonwv.portal.civicclerk.com" in base_url:
+                scraper = CharlestonCivicClerkScraper(context, base_url)
+                medias = await scraper.scrape_charleston_civicclerk()
+            elif "youtube.com/@SLCLiveMeetings/streams" in base_url:
+                scraper = YouTubeLiveMeetingsScraper(context, base_url)
+                medias = await scraper.scrape_youtube_live_meetings()
             else:
                 print(f"Unknown base_url: {base_url}, skipping.")
                 medias = []

@@ -9,7 +9,8 @@ from urllib.parse import urljoin
 # Default test input
 MEETING_URLS = [
     "https://www.lansdale.org/CivicMedia.aspx?VID=Work-Session-1242024-262#player",
-    "http://detroit-vod.cablecast.tv/CablecastPublicSite/show/14446?site=1"
+    "http://detroit-vod.cablecast.tv/CablecastPublicSite/show/14446?site=1",
+    "https://www.youtube.com/watch?v=L2zlvczRd6M"
 ]
 
 def check_with_ytdlp(url):
@@ -75,10 +76,16 @@ def extract_video_info_with_ytdlp(url):
 async def extract_video_source_url(page, meeting_url):
     print(f"Visiting: {meeting_url}")
     video_requests = []
-    video_pattern = re.compile(r"\.(m3u8|mp4|webm|mov|flv|f4v|m4v|avi|mpg|mpeg|3gp|ogg|ogv|ts)(\?|$)", re.IGNORECASE)
+    video_pattern = re.compile(r"\\.(m3u8|mp4|webm|mov|flv|f4v|m4v|avi|mpg|mpeg|3gp|ogg|ogv|ts)(\\?|$)", re.IGNORECASE)
 
     def handle_request(request):
         url = request.url
+        resource_type = request.resource_type
+        # Capture all XHR/fetch requests
+        if resource_type in ("xhr", "fetch"):
+            print(f"[XHR/FETCH] {url}")
+            video_requests.append(url)
+        # Also capture by extension
         if video_pattern.search(url):
             print(f"[Network] Video-like URL found: {url}")
             video_requests.append(url)
@@ -110,6 +117,22 @@ async def extract_video_source_url(page, meeting_url):
             source_elem = await page.query_selector('video source')
             if source_elem:
                 video_src = await source_elem.get_attribute('src')
+        
+        # (Optional) Simulate play button click if no video found
+        if not video_src:
+            play_button = await page.query_selector('button[aria-label="Play"], .play, .vjs-play-control')
+            if play_button:
+                print("Simulating play button click...")
+                await play_button.click()
+                await page.wait_for_timeout(3000)
+                # Try again to find video src
+                video_elem = await page.query_selector('video')
+                if video_elem:
+                    video_src = await video_elem.get_attribute('src')
+                if not video_src:
+                    source_elem = await page.query_selector('video source')
+                    if source_elem:
+                        video_src = await source_elem.get_attribute('src')
         
         # Check inside iframes
         if not video_src:
@@ -266,12 +289,30 @@ async def main():
         await context.close()
         await browser.close()
     
+    # Filter valid_video_urls to only include direct video streams or page URLs yt-dlp can download
+    def is_video_url(url):
+        video_exts = ('.m3u8', '.mp4', '.webm', '.mov', '.flv', '.f4v', '.m4v', '.avi', '.mpg', '.mpeg', '.3gp', '.ogg', '.ogv', '.ts')
+        # Exclude subtitle, analytics, JS, and other non-video URLs
+        exclude_patterns = [
+            '.vtt', '.js', 'google-analytics', 'doubleclick', '/antiforgery', '/Toggle', '/closed-captions/', '/Assets/Scripts/'
+        ]
+        if any(pattern in url for pattern in exclude_patterns):
+            return False
+        if url.lower().endswith(video_exts):
+            return True
+        # Allow YouTube, Vimeo, and similar page URLs
+        if any(domain in url for domain in ['youtube.com', 'youtu.be', 'vimeo.com']):
+            return True
+        return False
+
+    filtered_video_urls = [url for url in valid_video_urls if is_video_url(url)]
+
     print(f"\n{'='*60}")
     print("RESULTS:")
     print(f"{'='*60}")
-    if valid_video_urls:
+    if filtered_video_urls:
         print("Valid downloadable video URLs:")
-        for i, url in enumerate(valid_video_urls, 1):
+        for i, url in enumerate(filtered_video_urls, 1):
             print(f"{i}. {url}")
     else:
         print("No valid downloadable video URLs found.")
