@@ -1,321 +1,291 @@
 import asyncio
 import subprocess
 import sys
-from playwright.async_api import async_playwright
-import re
 import json
-from urllib.parse import urljoin
+import re
+from urllib.parse import urljoin, urlparse
+from playwright.async_api import async_playwright
 
-# Default test input
-MEETING_URLS = [
-    "https://www.lansdale.org/CivicMedia.aspx?VID=Work-Session-1242024-262#player",
-    "http://detroit-vod.cablecast.tv/CablecastPublicSite/show/14446?site=1",
-    "https://www.youtube.com/watch?v=L2zlvczRd6M"
+# Test URLs from the problem
+TEST_URLS = [
+    "https://www.zoomgov.com/rec/share/vCZnQM5bgMzY7_n4lbQXYnVqsvPj49Ce-R0hMjMFPyG4FUC1HbSyQAZ9uPpRKDvV._6ZMrf7BXZzx6_RK?startTime=1709655569000",
+    "https://snohomish.legistar.com/Video.aspx?Mode=Granicus&ID1=9188&Mode2=Video",
+    "https://multnomah.granicus.com/MediaPlayer.php?view_id=3&clip_id=3097",
+    "https://traviscotx.portal.civicclerk.com/event/2583/media",
+    "https://legistar.council.nyc.gov/Video.aspx?Mode=Auto&URL=aHR0cHM6Ly9jb3VuY2lsbnljLnZpZWJpdC5jb20vdm9kLz9zPXRydWUmdj1OWUNDLVBWLTI1MC0xNF8yNDA2MDQtMTAxMzU0Lm1wNA%3d%3d&Mode2=Video",
+    "https://video.ibm.com/recorded/134312408",
+    "https://cityofalhambraorg-my.sharepoint.com/:v:/g/personal/lmyles_alhambraca_gov/ETs6K1euPsBClaWtczJXl-gB47R9yoz9o9FJYZuEY0KOjA?e=7B41Fy",
+    "https://audiomack.com/pemberton-twp-planningzoning-board-meetings/song/678668c3069f2"
 ]
 
-def check_with_ytdlp(url):
+def test_with_ytdlp(url):
+    """Test if URL is downloadable with yt-dlp"""
     try:
-        print(f"Checking with yt-dlp: {url}")
-        
-        # Try different ways to call yt-dlp
-        commands_to_try = [
-            ["yt-dlp", "--simulate", url],
-            [sys.executable, "-m", "yt_dlp", "--simulate", url],
-            ["python", "-m", "yt_dlp", "--simulate", url]
-        ]
-        
-        for cmd in commands_to_try:
+        for cmd in [["yt-dlp", "--simulate", url], [sys.executable, "-m", "yt_dlp", "--simulate", url]]:
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
                 if result.returncode == 0:
-                    print(f"✓ yt-dlp can download: {url}")
+                    print(f"✓ Valid: {url}")
                     return True
                 elif "ERROR:" in result.stderr:
-                    print(f"✗ yt-dlp cannot download: {url}")
-                    if result.stderr.strip():
-                        print(result.stderr.strip())
+                    print(f"✗ Invalid: {url}")
                     return False
             except FileNotFoundError:
                 continue
-            except Exception as e:
-                print(f"Error with command {cmd[0]}: {e}")
-                continue
-        
-        print("yt-dlp is not installed or not in PATH. Please install yt-dlp and try again.")
+        print("yt-dlp not found")
         return False
-        
     except Exception as e:
-        print(f"Error running yt-dlp: {e}")
+        print(f"Error testing {url}: {e}")
         return False
 
-def extract_video_info_with_ytdlp(url):
-    """Extract video information using yt-dlp"""
+def get_ytdlp_info(url):
+    """Get video info from yt-dlp if available"""
     try:
-        commands_to_try = [
-            ["yt-dlp", "--dump-json", "--no-download", url],
-            [sys.executable, "-m", "yt_dlp", "--dump-json", "--no-download", url],
-            ["python", "-m", "yt_dlp", "--dump-json", "--no-download", url]
-        ]
-        
-        for cmd in commands_to_try:
+        for cmd in [["yt-dlp", "--dump-json", "--no-download", url], [sys.executable, "-m", "yt_dlp", "--dump-json", "--no-download", url]]:
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
                 if result.returncode == 0 and result.stdout.strip():
-                    video_info = json.loads(result.stdout)
-                    return video_info
+                    return json.loads(result.stdout)
             except (FileNotFoundError, json.JSONDecodeError):
                 continue
-            except Exception:
-                continue
-        
         return None
-    except Exception as e:
-        print(f"Error extracting video info: {e}")
+    except Exception:
         return None
 
-async def extract_video_source_url(page, meeting_url):
-    print(f"Visiting: {meeting_url}")
-    video_requests = []
-    video_pattern = re.compile(r"\\.(m3u8|mp4|webm|mov|flv|f4v|m4v|avi|mpg|mpeg|3gp|ogg|ogv|ts)(\\?|$)", re.IGNORECASE)
-
+async def extract_video_urls(page, url):
+    """Extract video URLs from a webpage using multiple strategies"""
+    print(f"\n{'='*50}")
+    print(f"Processing: {url}")
+    print(f"{'='*50}")
+    
+    # Strategy 1: Try yt-dlp directly on the page URL first
+    if test_with_ytdlp(url):
+        return [url]
+    
+    video_urls = set()
+    
+    # Set up network monitoring for video requests
+    video_patterns = [
+        r'\.m3u8(\?|$)',
+        r'\.mp4(\?|$)', 
+        r'\.webm(\?|$)',
+        r'\.mov(\?|$)',
+        r'\.flv(\?|$)',
+        r'\.ts(\?|$)',
+        r'/playlist\.m3u8',
+        r'/master\.m3u8',
+        r'stream\.m3u8',
+        r'\.mpd(\?|$)',  # DASH
+        r'rtmp://',
+        r'rtmps://'
+    ]
+    
     def handle_request(request):
-        url = request.url
-        resource_type = request.resource_type
-        # Capture all XHR/fetch requests
-        if resource_type in ("xhr", "fetch"):
-            print(f"[XHR/FETCH] {url}")
-            video_requests.append(url)
-        # Also capture by extension
-        if video_pattern.search(url):
-            print(f"[Network] Video-like URL found: {url}")
-            video_requests.append(url)
-
+        req_url = request.url
+        # Check for video-like URLs in network requests
+        for pattern in video_patterns:
+            if re.search(pattern, req_url, re.IGNORECASE):
+                print(f"[Network] Found video URL: {req_url}")
+                video_urls.add(req_url)
+    
     page.on('request', handle_request)
-
-    try:
-        await page.goto(meeting_url, wait_until='domcontentloaded', timeout=60000)
-        
-        # Wait for additional content to load
-        await page.wait_for_timeout(5000)
-        
-        # Print all iframe srcs for debugging
-        iframes = await page.query_selector_all('iframe')
-        iframe_srcs = []
-        for idx, iframe in enumerate(iframes):
-            src = await iframe.get_attribute('src')
-            print(f'Iframe {idx}: {src}')
-            if src and src.startswith('http'):
-                iframe_srcs.append(src)
-        
-        # Try to find a <video> tag or <source> tag
-        video_src = None
-        video_elem = await page.query_selector('video')
-        if video_elem:
-            video_src = await video_elem.get_attribute('src')
-        
-        if not video_src:
-            source_elem = await page.query_selector('video source')
-            if source_elem:
-                video_src = await source_elem.get_attribute('src')
-        
-        # (Optional) Simulate play button click if no video found
-        if not video_src:
-            play_button = await page.query_selector('button[aria-label="Play"], .play, .vjs-play-control')
-            if play_button:
-                print("Simulating play button click...")
-                await play_button.click()
-                await page.wait_for_timeout(3000)
-                # Try again to find video src
-                video_elem = await page.query_selector('video')
-                if video_elem:
-                    video_src = await video_elem.get_attribute('src')
-                if not video_src:
-                    source_elem = await page.query_selector('video source')
-                    if source_elem:
-                        video_src = await source_elem.get_attribute('src')
-        
-        # Check inside iframes
-        if not video_src:
-            for iframe in iframes:
-                try:
-                    frame = await iframe.content_frame()
-                    if frame:
-                        # Wait for iframe content to load
-                        await frame.wait_for_timeout(2000)
-                        
-                        video_elem = await frame.query_selector('video')
-                        if video_elem:
-                            video_src = await video_elem.get_attribute('src')
-                            if video_src:
-                                break
-                        
-                        if not video_src:
-                            source_elem = await frame.query_selector('video source')
-                            if source_elem:
-                                video_src = await source_elem.get_attribute('src')
-                                if video_src:
-                                    break
-                except Exception as e:
-                    print(f"Error accessing iframe content: {e}")
-                    continue
-        
-        if video_src and not video_src.startswith('http'):
-            video_src = urljoin(meeting_url, video_src)
-        
-        return video_src, iframe_srcs, list(set(video_requests))
-    
-    finally:
-        # Remove the event listener
-        try:
-            page.remove_listener('request', handle_request)
-        except:
-            pass
-
-async def process_iframe_for_video_sources(page, iframe_url):
-    """Visit iframe and extract video sources"""
-    print(f"\n--- Processing iframe: {iframe_url} ---")
     
     try:
-        await page.goto(iframe_url, wait_until='domcontentloaded', timeout=30000)
-        await page.wait_for_timeout(3000)
+        # Load the page with better error handling
+        await page.goto(url, wait_until='domcontentloaded', timeout=45000)  # Reduced timeout
+        await page.wait_for_timeout(2000)  # Reduced wait time
         
-        # Look for video elements
-        video_sources = []
-        
-        # Direct video elements
+        # Strategy 2: Look for video elements and their sources
         videos = await page.query_selector_all('video')
         for video in videos:
             src = await video.get_attribute('src')
             if src:
-                video_sources.append(src)
-                print(f"Found video src: {src}")
+                full_url = urljoin(url, src) if not src.startswith('http') else src
+                print(f"[Video Element] Found: {full_url}")
+                video_urls.add(full_url)
         
-        # Source elements within video tags
-        sources = await page.query_selector_all('video source')
+        # Look for source elements
+        sources = await page.query_selector_all('video source, source')
         for source in sources:
             src = await source.get_attribute('src')
             if src:
-                video_sources.append(src)
-                print(f"Found source src: {src}")
+                full_url = urljoin(url, src) if not src.startswith('http') else src
+                print(f"[Source Element] Found: {full_url}")
+                video_urls.add(full_url)
         
-        # Look for JavaScript variables that might contain video URLs
-        js_content = await page.evaluate("""
+        # Strategy 3: Check iframes
+        iframes = await page.query_selector_all('iframe')
+        iframe_urls = []
+        for iframe in iframes:
+            src = await iframe.get_attribute('src')
+            if src and src.startswith('http'):
+                iframe_urls.append(src)
+                print(f"[Iframe] Found: {src}")
+        
+        # Test iframe URLs with yt-dlp
+        for iframe_url in iframe_urls:
+            if test_with_ytdlp(iframe_url):
+                video_urls.add(iframe_url)
+        
+        # Strategy 4: Extract video URLs from JavaScript
+        js_video_urls = await page.evaluate("""
             () => {
+                const videoUrls = new Set();
                 const scripts = document.querySelectorAll('script');
-                let videoUrls = [];
                 
-                for (let script of scripts) {
+                // Common video URL patterns in JS (fixed regex escaping)
+                const patterns = [
+                    /["']([^"']*\\.m3u8[^"']*)/gi,
+                    /["']([^"']*\\.mp4[^"']*)/gi,
+                    /["']([^"']*\\.webm[^"']*)/gi,
+                    /["']([^"']*stream[^"']*)/gi,
+                    /src[\\s]*:[\\s]*["']([^"']*\\.(m3u8|mp4|webm)[^"']*)/gi,
+                    /url[\\s]*:[\\s]*["']([^"']*\\.(m3u8|mp4|webm)[^"']*)/gi,
+                    /file[\\s]*:[\\s]*["']([^"']*\\.(m3u8|mp4|webm)[^"']*)/gi
+                ];
+                
+                scripts.forEach(script => {
                     const content = script.textContent || script.innerText || '';
-                    
-                    // Look for common video URL patterns
-                    const patterns = [
-                        /["']([^"']*\.m3u8[^"']*)/gi,
-                        /["']([^"']*\.mp4[^"']*)/gi,
-                        /["']([^"']*rtmp[^"']*)/gi,
-                        /src["\s]*:["\s]*["']([^"']*\.(m3u8|mp4|webm)[^"']*)/gi
-                    ];
                     
                     patterns.forEach(pattern => {
                         let match;
                         while ((match = pattern.exec(content)) !== null) {
-                            videoUrls.push(match[1]);
+                            let url = match[1] || match[0];
+                            // Clean up escaped URLs from JavaScript
+                            url = url.replace(/\\\//g, '/');
+                            if (url && (url.startsWith('http') || url.startsWith('//'))) {
+                                videoUrls.add(url.startsWith('//') ? 'https:' + url : url);
+                            }
                         }
                     });
-                }
+                });
                 
-                return videoUrls;
+                return Array.from(videoUrls);
             }
         """)
         
-        if js_content:
-            for url in js_content:
-                if url and url.startswith('http'):
-                    video_sources.append(url)
-                    print(f"Found video URL in JS: {url}")
+        for js_url in js_video_urls:
+            print(f"[JavaScript] Found: {js_url}")
+            video_urls.add(js_url)
         
-        return video_sources
+        # Strategy 5: Look for download links or API endpoints
+        download_links = await page.query_selector_all('a[href*="download"], a[href*="stream"], a[href*="video"]')
+        for link in download_links:
+            href = await link.get_attribute('href')
+            if href and any(ext in href.lower() for ext in ['.mp4', '.m3u8', '.webm', 'download', 'stream']):
+                full_url = urljoin(url, href) if not href.startswith('http') else href
+                print(f"[Download Link] Found: {full_url}")
+                video_urls.add(full_url)
+        
+        # Strategy 6: Try clicking play buttons to trigger video loading (with better error handling)
+        play_buttons = await page.query_selector_all(
+            'button[aria-label*="play" i], button[aria-label*="Play" i], '
+            '.play-button, .vjs-play-control, [class*="play"]:not([class*="playlist"]), [id*="play"]'
+        )
+        
+        if play_buttons:
+            print(f"Found {len(play_buttons)} potential play buttons, trying to click...")
+            for i, button in enumerate(play_buttons[:2]):  # Try first 2 buttons only
+                try:
+                    # Check if button is visible and enabled
+                    is_visible = await button.is_visible()
+                    is_enabled = await button.is_enabled()
+                    
+                    if is_visible and is_enabled:
+                        await button.click(timeout=5000)  # Shorter timeout
+                        await page.wait_for_timeout(2000)
+                        print(f"Clicked play button {i+1}")
+                        break  # Stop after first successful click
+                except Exception as e:
+                    print(f"Could not click play button {i+1}: {str(e)[:100]}...")
+                    continue
+        
+        # Wait a bit more for any lazy-loaded content
+        await page.wait_for_timeout(2000)
         
     except Exception as e:
-        print(f"Error processing iframe {iframe_url}: {e}")
-        return []
+        print(f"Error processing {url}: {e}")
+    
+    finally:
+        try:
+            page.remove_listener('request', handle_request)
+        except:
+            pass
+    
+    return list(video_urls)
+
+def filter_valid_urls(urls):
+    """Filter URLs to only include likely video sources"""
+    filtered = []
+    exclude_patterns = [
+        '.vtt', '.js', '.css', '.png', '.jpg', '.gif', '.svg', '.ico',
+        'analytics', 'tracking', 'antiforgery', 'csrf', 'facebook.com',
+        'assets/scripts', 'jquery', 'bootstrap', 'trustarc.com',
+        'ustream.tv/recorded', 'akamaihd.net/web-player'  # Exclude problematic URLs we saw
+    ]
+    
+    for url in urls:
+        # Skip obviously non-video URLs
+        if any(pattern in url.lower() for pattern in exclude_patterns):
+            continue
+            
+        # Include video file extensions or known video platforms/patterns
+        if (any(ext in url.lower() for ext in ['.m3u8', '.mp4', '.webm', '.mov', '.flv', '.ts', '.mpd']) or
+            any(platform in url.lower() for platform in ['granicus.com', 'sharepoint.com', 'playlist']) or
+            ('stream' in url.lower() and any(ext in url.lower() for ext in ['.m3u8', '.mp4']))):
+            filtered.append(url)
+    
+    return filtered
 
 async def main():
-    valid_video_urls = []
+    """Main function to process all URLs"""
+    valid_urls = []
     
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
             viewport={'width': 1920, 'height': 1080},
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         )
         page = await context.new_page()
         
-        for meeting_url in MEETING_URLS:
-            print(f"\n{'='*60}")
-            print(f"Processing: {meeting_url}")
-            print(f"{'='*60}")
-            
-            # Try yt-dlp directly on the meeting page URL
-            if check_with_ytdlp(meeting_url):
-                valid_video_urls.append(meeting_url)
-                continue
-            
-            # Extract video sources from the page
-            video_url, iframe_srcs, network_video_urls = await extract_video_source_url(page, meeting_url)
-            
-            # Check direct video URL if found
-            if video_url and check_with_ytdlp(video_url):
-                valid_video_urls.append(video_url)
-                continue
-            
-            # Process each iframe to find video sources
-            for iframe_url in iframe_srcs:
-                print(f"\n--- Checking iframe with yt-dlp: {iframe_url} ---")
-                if check_with_ytdlp(iframe_url):
-                    valid_video_urls.append(iframe_url)
-                else:
-                    # Visit the iframe and look for video sources
-                    iframe_video_sources = await process_iframe_for_video_sources(page, iframe_url)
-                    for video_src in iframe_video_sources:
-                        if check_with_ytdlp(video_src):
-                            valid_video_urls.append(video_src)
-            
-            # Check network-captured video URLs
-            for net_url in network_video_urls:
-                if check_with_ytdlp(net_url):
-                    valid_video_urls.append(net_url)
+        for url in TEST_URLS:
+            try:
+                found_urls = await extract_video_urls(page, url)
+                
+                # Filter and test each found URL
+                filtered_urls = filter_valid_urls(found_urls)
+                for video_url in filtered_urls:
+                    if test_with_ytdlp(video_url):
+                        valid_urls.append(video_url)
+                        
+            except Exception as e:
+                print(f"Error processing {url}: {e}")
         
-        await page.close()
-        await context.close()
         await browser.close()
     
-    # Filter valid_video_urls to only include direct video streams or page URLs yt-dlp can download
-    def is_video_url(url):
-        video_exts = ('.m3u8', '.mp4', '.webm', '.mov', '.flv', '.f4v', '.m4v', '.avi', '.mpg', '.mpeg', '.3gp', '.ogg', '.ogv', '.ts')
-        # Exclude subtitle, analytics, JS, and other non-video URLs
-        exclude_patterns = [
-            '.vtt', '.js', 'google-analytics', 'doubleclick', '/antiforgery', '/Toggle', '/closed-captions/', '/Assets/Scripts/'
-        ]
-        if any(pattern in url for pattern in exclude_patterns):
-            return False
-        if url.lower().endswith(video_exts):
-            return True
-        # Allow YouTube, Vimeo, and similar page URLs
-        if any(domain in url for domain in ['youtube.com', 'youtu.be', 'vimeo.com']):
-            return True
-        return False
-
-    filtered_video_urls = [url for url in valid_video_urls if is_video_url(url)]
-
+    # Print results
     print(f"\n{'='*60}")
-    print("RESULTS:")
+    print("FINAL RESULTS:")
     print(f"{'='*60}")
-    if filtered_video_urls:
+    
+    if valid_urls:
+        # Remove duplicates while preserving order
+        unique_urls = []
+        seen = set()
+        for url in valid_urls:
+            if url not in seen:
+                unique_urls.append(url)
+                seen.add(url)
+        
         print("Valid downloadable video URLs:")
-        for i, url in enumerate(filtered_video_urls, 1):
+        for i, url in enumerate(unique_urls, 1):
             print(f"{i}. {url}")
+        
+        return unique_urls
     else:
         print("No valid downloadable video URLs found.")
+        return []
 
 if __name__ == "__main__":
     asyncio.run(main())
