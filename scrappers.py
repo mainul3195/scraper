@@ -5,7 +5,7 @@ import random
 import asyncio
 import json
 
-class Scraper:
+class DetroitScraper:
     def __init__(self, context, start_date, end_date, base_urls):
         if isinstance(start_date, str):
             start_date = dateparse(start_date)
@@ -770,50 +770,156 @@ class CharlestonCivicClerkScraper:
         return medias 
 
 class YouTubeLiveMeetingsScraper:
-    def __init__(self, context, base_url):
+    def __init__(self, context, base_url, start_date=None, end_date=None):
+        from dateutil.parser import parse as dateparse
         self.context = context
         self.base_url = base_url
+        if start_date is not None and isinstance(start_date, str):
+            start_date = dateparse(start_date)
+        if end_date is not None and isinstance(end_date, str):
+            end_date = dateparse(end_date)
+        self.start_date = start_date
+        self.end_date = end_date
 
-    async def parse_relative_time(self, time_str):
-        # Example: 'Streamed 1 month ago', 'Streamed 5 hours ago'
-        import re
-        from datetime import datetime, timedelta
-        now = datetime.now()
-        time_str = time_str.lower().strip()
-        match = re.search(r'streamed\s+(\d+)\s+(minute|hour|day|week|month|year)', time_str)
-        if not match:
-            return None
-        number = int(match.group(1))
-        unit = match.group(2)
-        if 'minute' in unit:
-            return (now - timedelta(minutes=number)).strftime('%Y-%m-%d')
-        elif 'hour' in unit:
-            return (now - timedelta(hours=number)).strftime('%Y-%m-%d')
-        elif 'day' in unit:
-            return (now - timedelta(days=number)).strftime('%Y-%m-%d')
-        elif 'week' in unit:
-            return (now - timedelta(weeks=number)).strftime('%Y-%m-%d')
-        elif 'month' in unit:
-            return (now - timedelta(days=number * 30)).strftime('%Y-%m-%d')
-        elif 'year' in unit:
-            return (now - timedelta(days=number * 365)).strftime('%Y-%m-%d')
-        return None
-
-    async def scroll_to_load_all_youtube_videos(self, page, max_scrolls=200, wait_time=2, no_new_limit=10):
+    async def scroll_to_load_all_youtube_videos(self, page, max_scrolls=200, wait_time=1, no_new_limit=10):
+        print("[Scroll] Starting to scroll to load YouTube videos...")
         last_count = 0
         no_new_count = 0
-        for _ in range(max_scrolls):
+        for scroll_num in range(max_scrolls):
             await page.evaluate('window.scrollBy(0, 500)')
             await page.wait_for_timeout(wait_time * 1000)
             video_items = await page.query_selector_all('ytd-rich-item-renderer')
+            print(f"[Scroll] Scroll {scroll_num+1}: {len(video_items)} videos loaded so far.")
             if len(video_items) == last_count:
                 no_new_count += 1
             else:
                 no_new_count = 0
             last_count = len(video_items)
             if no_new_count >= no_new_limit:
+                print("[Scroll] No new videos loaded after several scrolls. Stopping scroll.")
                 break
+        print(f"[Scroll] Finished scrolling. Total videos loaded: {last_count}")
         return await page.query_selector_all('ytd-rich-item-renderer')
+
+    async def extract_upload_date_from_video(self, video_url):
+        print(f"[DateExtract] Visiting video page: {video_url}")
+        page = await self.context.new_page()
+        try:
+            await page.goto(video_url, wait_until='domcontentloaded', timeout=60000)
+            await page.wait_for_timeout(2000)
+            # Try to find and click the 'more' button robustly
+            try:
+                more_btn = None
+                try:
+                    more_btn = await page.wait_for_selector('tp-yt-paper-button#expand', state='visible', timeout=5000)
+                except Exception:
+                    pass
+                if not more_btn:
+                    # Try fallback selector
+                    btns = await page.query_selector_all('tp-yt-paper-button')
+                    for btn in btns:
+                        btn_text = (await btn.text_content() or '').strip().lower()
+                        if btn_text == 'more':
+                            more_btn = btn
+                            break
+                if more_btn:
+                    is_enabled = True
+                    try:
+                        is_enabled = await more_btn.is_enabled()
+                    except Exception:
+                        pass
+                    if is_enabled:
+                        print("[DateExtract] Clicking 'more' button to expand description...")
+                        await more_btn.click()
+                        await page.wait_for_timeout(1000)
+                    else:
+                        print("[DateExtract] 'more' button found but not enabled.")
+                else:
+                    print("[DateExtract] 'more' button not found. Listing all tp-yt-paper-button texts:")
+                    btns = await page.query_selector_all('tp-yt-paper-button')
+                    for i, btn in enumerate(btns):
+                        btn_text = (await btn.text_content() or '').strip()
+                        print(f"  [Button {i+1}] {btn_text}")
+            except Exception as e:
+                print(f"[DateExtract] Could not click 'more' button: {e}")
+            # Wait for the expanded date string to appear (up to 10s)
+            found_date = False
+            for attempt in range(10):
+                candidates = await page.query_selector_all('span.yt-formatted-string')
+                for span in candidates:
+                    text = (await span.text_content() or '').strip()
+                    if any(phrase in text for phrase in ['Streamed live on', 'Premiered on', 'Published on']):
+                        found_date = True
+                        date_text = text
+                        print(f"[DateExtract] Found date string: {date_text}")
+                        import re
+                        from dateutil.parser import parse as dateparse
+                        match = re.search(r'(Streamed live on|Premiered on|Published on) (.+)', date_text)
+                        if match:
+                            date_part = match.group(2)
+                            try:
+                                dt = dateparse(date_part)
+                                result = dt.strftime('%Y-%m-%d')
+                                print(f"[DateExtract] Parsed upload date: {result}")
+                                await page.close()
+                                return result
+                            except Exception as e:
+                                print(f"[DateExtract] Failed to parse date: {e}")
+                if found_date:
+                    break
+                await page.wait_for_timeout(1000)
+            if not found_date:
+                print("[DateExtract] No upload date string found on video page after clicking 'more'. Printing all candidate texts:")
+                for i, span in enumerate(candidates):
+                    text = (await span.text_content() or '').strip()
+                    print(f"  [Candidate {i+1}] {text}")
+            await page.close()
+            return None
+        except Exception as e:
+            print(f"[DateExtract] Error visiting video page: {e}")
+            await page.close()
+            # Wait for any span.yt-formatted-string to appear
+            try:
+                await page.wait_for_selector('span.yt-formatted-string', timeout=10000)
+            except Exception as e:
+                print(f"[DateExtract] Timed out waiting for span.yt-formatted-string: {e}")
+            # Find the date string
+            date_text = None
+            date_span = None
+            candidates = await page.query_selector_all('span.yt-formatted-string')
+            for span in candidates:
+                text = (await span.text_content() or '').strip()
+                if any(phrase in text for phrase in ['Streamed live on', 'Premiered on', 'Published on']):
+                    date_text = text
+                    date_span = span
+                    break
+            if date_text:
+                print(f"[DateExtract] Found date string: {date_text}")
+                # Extract the date part
+                import re
+                from dateutil.parser import parse as dateparse
+                match = re.search(r'(Streamed live on|Premiered on|Published on) (.+)', date_text)
+                if match:
+                    date_part = match.group(2)
+                    try:
+                        dt = dateparse(date_part)
+                        result = dt.strftime('%Y-%m-%d')
+                        print(f"[DateExtract] Parsed upload date: {result}")
+                        await page.close()
+                        return result
+                    except Exception as e:
+                        print(f"[DateExtract] Failed to parse date: {e}")
+            else:
+                print("[DateExtract] No upload date string found on video page. Printing all candidate texts:")
+                for i, span in enumerate(candidates):
+                    text = (await span.text_content() or '').strip()
+                    print(f"  [Candidate {i+1}] {text}")
+            await page.close()
+            return None
+        except Exception as e:
+            print(f"[DateExtract] Error visiting video page: {e}")
+            await page.close()
+            return None
 
     async def scrape_youtube_live_meetings(self):
         print(f"\nScraping YouTube Live Meetings from {self.base_url}")
@@ -825,41 +931,55 @@ class YouTubeLiveMeetingsScraper:
 
         # Incremental scroll to load all videos
         video_items = await self.scroll_to_load_all_youtube_videos(page)
-        print(f"Found {len(video_items)} video items")
-        for item in video_items:
+        print(f"[Main] Found {len(video_items)} video items. Beginning extraction...")
+        for idx, item in enumerate(video_items):
+            print(f"[Main] Processing video {idx+1}/{len(video_items)}...")
             # Get the video link and title
             link_elem = await item.query_selector('a#video-title-link')
             if not link_elem:
+                print(f"[Main] Skipping video {idx+1}: No link element found.")
                 continue
             href = await link_elem.get_attribute('href')
             title = await link_elem.get_attribute('title') or await link_elem.text_content() or 'YouTube Video'
             title = title.strip()
             if not href:
+                print(f"[Main] Skipping video {idx+1}: No href found.")
                 continue
             if href.startswith('/'):
                 full_url = 'https://www.youtube.com' + href
             else:
                 full_url = href
             if full_url in seen_urls:
+                print(f"[Main] Skipping video {idx+1}: Duplicate URL.")
                 continue
             seen_urls.add(full_url)
-            # Get the upload date (relative time)
-            date_elems = await item.query_selector_all('span.inline-metadata-item.style-scope.ytd-video-meta-block')
-            upload_date = None
-            for elem in date_elems:
-                date_text = await elem.text_content()
-                if date_text and 'streamed' in date_text.lower():
-                    upload_date = await self.parse_relative_time(date_text)
+            # Visit the video page and extract the upload date
+            upload_date = await self.extract_upload_date_from_video(full_url)
+            dt = None
+            if upload_date:
+                try:
+                    dt = dateparse(upload_date)
+                except Exception:
+                    print(f"[Main] Could not parse upload date: {upload_date}")
+            # Filter by date range
+            add_media = True
+            if self.start_date and self.end_date and dt:
+                if dt < self.start_date:
+                    print(f"[Main] Stopping: found date {dt.strftime('%Y-%m-%d')} before start date {self.start_date.strftime('%Y-%m-%d')}")
                     break
-            medias.append({
-                "url": full_url,
-                "title": title,
-                "date": upload_date,
-                "source_type": "video"
-            })
-            print(f"✓ Added: {title} | {full_url} | {upload_date}")
+                if not (self.start_date <= dt <= self.end_date):
+                    print(f"[Main] Skipping (out of range): {title} | {upload_date}")
+                    add_media = False
+            if add_media:
+                medias.append({
+                    "url": full_url,
+                    "title": title,
+                    "date": upload_date,
+                    "source_type": "video"
+                })
+                print(f"[Main] ✓ Added: {title} | {full_url} | {upload_date}")
         await page.close()
-        print(f"\nTotal YouTube Live Meetings found: {len(medias)}")
+        print(f"\n[Main] Total YouTube Live Meetings found: {len(medias)}")
         return medias 
 
 

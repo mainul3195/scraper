@@ -1,7 +1,6 @@
 import asyncio
 from playwright.async_api import async_playwright
 
-# VIDEO_PAGE_URL = "https://video.ibm.com/recorded/134312408"
 VIDEO_PAGE_URL = "https://monticello.viebit.com/watch?hash=HCZTN4vuyJ91LlrS"
 # VIDEO_PAGE_URL = "https://play.champds.com/guilderlandny/event/431"
 

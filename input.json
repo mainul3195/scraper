@@ -1,10 +1,7 @@
 {
-    "start_date": "2024-07-20",
-    "end_date": "2024-12-20",
+    "start_date": "2025-05-25",
+    "end_date": "2025-06-01",
     "base_urls": [
-                "http://detroit-vod.cablecast.tv/CablecastPublicSite",
-                "https://www.lansdale.org/CivicMedia?CID=2024-Council-Meetings-26",
-                "https://www.regionalwebtv.com/fredcc",
-                "https://www.youtube.com/@SLCLiveMeetings/streams"
-          ]
-  }
+        "https://www.youtube.com/@SLCLiveMeetings/streams"
+    ]
+}

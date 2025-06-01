@@ -1,7 +1,7 @@
 import asyncio
 import json
 from playwright.async_api import async_playwright
-from scrappers import Scraper, LansdaleScraper, FacebookVideoScraper, CharlestonCivicClerkScraper, YouTubeLiveMeetingsScraper, RegionalWebTVScraper
+from scrappers import DetroitScraper, LansdaleScraper, FacebookVideoScraper, CharlestonCivicClerkScraper, YouTubeLiveMeetingsScraper, RegionalWebTVScraper
 
 async def main():
     # Read input from input.json
@@ -15,12 +15,16 @@ async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
-            viewport={'width': 1920, 'height': 1080}
+            viewport={'width': 1920, 'height': 1080},
+            locale='en-US',
+            extra_http_headers={
+                'Accept-Language': 'en-US,en;q=0.9'
+            }
         )
         for base_url in base_urls:
             # Use Scraper for Detroit, LansdaleScraper for Lansdale, FacebookVideoScraper for Facebook, CharlestonCivicClerkScraper for Charleston, YouTubeLiveMeetingsScraper for YouTube, RegionalWebTVScraper for Regional Web TV
             if "detroit-vod.cablecast.tv" in base_url:
-                scraper = Scraper(context, start_date, end_date, [base_url])
+                scraper = DetroitScraper(context, start_date, end_date, [base_url])
                 medias = await scraper.scrape_detroit_vod()
             elif "lansdale.org" in base_url:
                 scraper = LansdaleScraper(context, base_url, start_date, end_date)
@@ -32,7 +36,7 @@ async def main():
                 scraper = CharlestonCivicClerkScraper(context, base_url)
                 medias = await scraper.scrape_charleston_civicclerk()
             elif "youtube.com/@SLCLiveMeetings/streams" in base_url:
-                scraper = YouTubeLiveMeetingsScraper(context, base_url)
+                scraper = YouTubeLiveMeetingsScraper(context, base_url, start_date, end_date)
                 medias = await scraper.scrape_youtube_live_meetings()
             elif "regionalwebtv.com/fredcc" in base_url:
                 scraper = RegionalWebTVScraper(context, base_url, start_date, end_date)
