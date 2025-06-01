@@ -41,14 +41,15 @@ playwright install
 - [Lansdale CivicMedia](https://www.lansdale.org/CivicMedia?CID=2024-Council-Meetings-26) (**fully implemented**)
 - [YouTube Live Meetings](https://www.youtube.com/@SLCLiveMeetings/streams) (**fully implemented**)
 - [Regional Web TV](https://www.regionalwebtv.com/fredcc) (**fully implemented**)
-- [Facebook Videos](https://www.facebook.com/DauphinCountyPA/videos) (**partially implemented, see below**)
-- [Charleston CivicClerk](https://charlestonwv.portal.civicclerk.com/) [Winchester CivicWeb](https://winchesterva.civicweb.net/portal/) (**PDF, not yet implemented**)
+- [Facebook Videos](https://www.facebook.com/DauphinCountyPA/videos) (**video scraping implemented, date filtering not supported**)
+- [Charleston CivicClerk](https://charlestonwv.portal.civicclerk.com/) (**PDFs, fully implemented**)
+- [Winchester CivicWeb](https://winchesterva.civicweb.net/portal/) (**PDF, not yet implemented**)
 
-**Facebook Scraper Note:**
-> The Facebook video scraper is not yet fully reliable due to issues with infinite scrolling and dynamic content loading. It attempts aggressive scrolling and extraction, but may miss videos or require further work to handle Facebook's anti-bot measures and page structure changes.
+**Facebook Scraper:**
+> The Facebook video scraper is implemented and can collect all video links and titles from given public Facebook video page. **However, it cannot extract upload dates, so filtering by start and end date is not supported.**
 
 **PDF Scrapers:**
-> The Charleston CivicClerk scraper and the Winchester CivicWeb PDF scraper is not yet implemented.
+> The Charleston CivicClerk scraper is now implemented and scrapes PDFs (such as agendas, packets, and minutes) from the Charleston CivicClerk website. Winchester CivicWeb PDF scraper is not yet implemented.
 
 **Input Example:**
 ```json
@@ -181,7 +182,7 @@ python bonus.py
 ## 📝 Notes
 - For best results, always use the latest version of `yt-dlp` and `aria2c`.
 - Some sites may require additional handling (e.g., login, cookies, or advanced scraping logic).
-- **Facebook video extraction is not yet fully reliable due to scrolling/dynamic loading issues.**
+- **Facebook video extraction can collect all video links and titles, but cannot extract upload dates, so filtering by date is not supported.**
 - **PDF scraping is only implemented for Charleston CivicClerk; Winchester CivicWeb is not yet implemented.**
 - You can further automate the pipeline by combining the scripts or using a workflow manager.
 
