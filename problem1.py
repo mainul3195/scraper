@@ -33,7 +33,7 @@ async def main():
                 scraper = FacebookVideoScraper(context, base_url)
                 medias = await scraper.scrape_facebook_videos()
             elif "charlestonwv.portal.civicclerk.com" in base_url:
-                scraper = CharlestonCivicClerkScraper(context, base_url)
+                scraper = CharlestonCivicClerkScraper(context, base_url, start_date, end_date)
                 medias = await scraper.scrape_charleston_civicclerk()
             elif "youtube.com/@SLCLiveMeetings/streams" in base_url:
                 scraper = YouTubeLiveMeetingsScraper(context, base_url, start_date, end_date)

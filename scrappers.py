@@ -5,6 +5,8 @@ import random
 import asyncio
 import json
 import os
+import aiohttp
+from dateutil.tz import UTC
 
 class DetroitScraper:
     def __init__(self, context, start_date, end_date, base_urls):
@@ -12,6 +14,11 @@ class DetroitScraper:
             start_date = dateparse(start_date)
         if isinstance(end_date, str):
             end_date = dateparse(end_date)
+        # Make start_date and end_date timezone-aware (UTC) if not already
+        if start_date is not None and start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=UTC)
+        if end_date is not None and end_date.tzinfo is None:
+            end_date = end_date.replace(tzinfo=UTC)
         self.context = context
         self.start_date = start_date
         self.end_date = end_date
@@ -92,6 +99,11 @@ class LansdaleScraper:
             start_date = dateparse(start_date)
         if end_date is not None and isinstance(end_date, str):
             end_date = dateparse(end_date)
+        # Make start_date and end_date timezone-aware (UTC) if not already
+        if start_date is not None and start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=UTC)
+        if end_date is not None and end_date.tzinfo is None:
+            end_date = end_date.replace(tzinfo=UTC)
         self.context = context
         self.base_url = base_url
         self.start_date = start_date
@@ -200,6 +212,8 @@ class LansdaleScraper:
             if self.start_date and self.end_date and upload_date and upload_date != 'nan':
                 try:
                     dt = dateparse(upload_date)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=UTC)
                     add_media = self.start_date <= dt <= self.end_date
                 except Exception:
                     add_media = False
@@ -221,6 +235,11 @@ class FacebookVideoScraper:
             start_date = dateparse(start_date)
         if end_date is not None and isinstance(end_date, str):
             end_date = dateparse(end_date)
+        # Make start_date and end_date timezone-aware (UTC) if not already
+        if start_date is not None and start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=UTC)
+        if end_date is not None and end_date.tzinfo is None:
+            end_date = end_date.replace(tzinfo=UTC)
         self.context = context
         self.base_url = base_url
         self.start_date = start_date
@@ -657,74 +676,98 @@ class FacebookVideoScraper:
             print(f"Error in debug_facebook_page: {e}")
 
 class CharlestonCivicClerkScraper:
-    def __init__(self, context, base_url):
+    def __init__(self, context, base_url, start_date=None, end_date=None):
+        if start_date is not None and isinstance(start_date, str):
+            start_date = dateparse(start_date)
+        if end_date is not None and isinstance(end_date, str):
+            end_date = dateparse(end_date)
+        # Make start_date and end_date timezone-aware (UTC) if not already
+        if start_date is not None and start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=UTC)
+        if end_date is not None and end_date.tzinfo is None:
+            end_date = end_date.replace(tzinfo=UTC)
         self.context = context
         self.base_url = base_url
+        self.start_date = start_date
+        self.end_date = end_date
+        self.api_base = "https://charlestonwv.api.civicclerk.com/v1/Events"
+
+    async def fetch_events_paginated(self, session, timestamp):
+        offset = 0
+        page_size = 20
+        has_more = True
+        all_events = []
+        while has_more:
+            query_params = {
+                "$filter": f"startDateTime le {timestamp}",
+                "$orderby": "startDateTime desc, eventName desc",
+                "$top": str(page_size),
+                "$skip": str(offset)
+            }
+            query_string = "&".join(f"{k}={aiohttp.helpers.quote(v)}" for k, v in query_params.items())
+            full_url = f"{self.api_base}?{query_string}"
+            print(f"Fetching: {full_url}")
+            try:
+                async with session.get(full_url) as response:
+                    if response.status != 200:
+                        print(f"Failed to fetch {full_url}: Status {response.status}")
+                        break
+                    json_data = await response.json()
+                    events = json_data.get("value", [])
+                    if not events:
+                        has_more = False
+                        break
+                    all_events.extend(events)
+                    offset += page_size
+            except Exception as e:
+                print(f"Error fetching {full_url}: {e}")
+                break
+        return all_events
 
     async def scrape_charleston_civicclerk(self):
         print(f"\nScraping Charleston CivicClerk media from {self.base_url}")
         medias = []
         seen_urls = set()
-        page = await self.context.new_page()
-        print(f"Navigating to: {self.base_url}")
-        await page.goto(self.base_url, wait_until='domcontentloaded', timeout=60000)
-
-        months_without_events = 0
-        max_months_without_events = 1
-        while months_without_events <= max_months_without_events:
-            # Find all event rows on the current month
-            event_rows = await page.query_selector_all('li.cpp-MuiListItem-container')
-            if not event_rows:
-                months_without_events += 1
-            else:
-                months_without_events = 0
-            for row in event_rows:
-                # Extract the media link
-                link_elem = await row.query_selector('a[href*="/files"]')
-                if not link_elem:
-                    continue
-                href = await link_elem.get_attribute('href')
-                if not href:
-                    continue
-                if href.startswith('/'):
-                    full_url = 'https://charlestonwv.portal.civicclerk.com' + href
-                else:
-                    full_url = href
-                if full_url in seen_urls:
-                    continue
-                seen_urls.add(full_url)
-                # Extract the title
-                title_elem = await row.query_selector('[aria-labelledby*="title"], [id*="title"], .cpp-MuiTypography-subtitle1')
-                title = await title_elem.text_content() if title_elem else 'PDF Media'
-                title = title.strip() if title else 'PDF Media'
-                # Extract the date
-                date_attr = await link_elem.get_attribute('data-date')
-                if not date_attr:
-                    # Try to get from parent row
-                    date_attr = await row.get_attribute('data-date')
-                upload_date = None
-                if date_attr:
+        timestamp = datetime.utcnow().isoformat() + "Z"
+        async with aiohttp.ClientSession() as session:
+            all_events = await self.fetch_events_paginated(session, timestamp)
+            for event in all_events:
+                title = event.get("eventName") or event.get("name")
+                upload_date = event.get("startDateTime")
+                published_files = event.get("publishedFiles") or []
+                # Date filtering
+                dt = None
+                if upload_date:
                     try:
-                        upload_date = date_attr[:10]
-                    except:
-                        upload_date = None
-                medias.append({
-                    "url": full_url,
-                    "title": title,
-                    "date": upload_date,
-                    "source_type": "pdf"
-                })
-                print(f"✓ Added: {title} | {full_url} | {upload_date}")
-            # Try to go to previous month
-            prev_btn = await page.query_selector('button[aria-label*="Previous month"], button[title*="Previous month"]')
-            if prev_btn:
-                await prev_btn.click()
-                await page.wait_for_timeout(2000)
-            else:
-                break
-        await page.close()
+                        dt = dateparse(upload_date)
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=UTC)
+                    except Exception:
+                        dt = None
+                # Only filter if both start_date and end_date are provided and dt is valid
+                if self.start_date and self.end_date:
+                    if not dt or not (self.start_date <= dt <= self.end_date):
+                        continue
+                for file in published_files:
+                    file_id = file.get("fileId") or file.get("id")
+                    file_name = file.get("name")
+                    if file_id and file_id != 0:
+                        file_url = (
+                            f"https://charlestonwv.api.civicclerk.com/"
+                            f"v1/Meetings/GetMeetingFileStream(fileId={file_id},plainText=false)"
+                        )
+                        if file_url in seen_urls:
+                            continue
+                        seen_urls.add(file_url)
+                        medias.append({
+                            "url": file_url,
+                            "title": file_name or title or "PDF Media",
+                            "date": upload_date[:10] if upload_date else None,
+                            "source_type": "pdf"
+                        })
+                        print(f"✓ Added: {file_name or title} | {file_url} | {upload_date}")
         print(f"\nTotal Charleston CivicClerk media found: {len(medias)}")
-        return medias 
+        return medias
 
 class YouTubeLiveMeetingsScraper:
     def __init__(self, context, base_url, start_date=None, end_date=None):
@@ -735,6 +778,11 @@ class YouTubeLiveMeetingsScraper:
             start_date = dateparse(start_date)
         if end_date is not None and isinstance(end_date, str):
             end_date = dateparse(end_date)
+        # Make start_date and end_date timezone-aware (UTC) if not already
+        if start_date is not None and start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=UTC)
+        if end_date is not None and end_date.tzinfo is None:
+            end_date = end_date.replace(tzinfo=UTC)
         self.start_date = start_date
         self.end_date = end_date
 
@@ -916,6 +964,8 @@ class YouTubeLiveMeetingsScraper:
             if upload_date:
                 try:
                     dt = dateparse(upload_date)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=UTC)
                 except Exception:
                     print(f"[Main] Could not parse upload date: {upload_date}")
             # Filter by date range
@@ -946,6 +996,11 @@ class RegionalWebTVScraper:
             start_date = dateparse(start_date)
         if end_date is not None and isinstance(end_date, str):
             end_date = dateparse(end_date)
+        # Make start_date and end_date timezone-aware (UTC) if not already
+        if start_date is not None and start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=UTC)
+        if end_date is not None and end_date.tzinfo is None:
+            end_date = end_date.replace(tzinfo=UTC)
         self.context = context
         self.base_url = base_url
         self.start_date = start_date
@@ -1071,6 +1126,8 @@ class RegionalWebTVScraper:
                             if self.start_date and self.end_date and upload_date:
                                 try:
                                     dt = dateparse(upload_date)
+                                    if dt.tzinfo is None:
+                                        dt = dt.replace(tzinfo=UTC)
                                     add_media = self.start_date <= dt <= self.end_date
                                 except Exception:
                                     add_media = False
