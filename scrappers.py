@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import random
 import asyncio
 import json
+import os
 
 class DetroitScraper:
     def __init__(self, context, start_date, end_date, base_urls):
@@ -253,11 +254,12 @@ class FacebookVideoScraper:
             return False
 
     async def scroll_to_load_all_videos(self, page, target_count=100, max_scrolls=200, base_wait_time=4):
-        """Aggressive scrolling to load all 100 videos"""
+        """Aggressive scrolling to load all 100 videos, with YouTube-style fallback if needed"""
         print(f"Starting to scroll and load video content (target: {target_count} videos)...")
         last_count = 0
         consecutive_no_change = 0
         max_no_change = 15  # Increased patience
+        used_fallback = False
         
         for scroll_num in range(max_scrolls):
             # Get current page height before scrolling
@@ -346,24 +348,30 @@ class FacebookVideoScraper:
                     
                 if consecutive_no_change >= max_no_change * patience_multiplier:
                     print(f"No new content after {consecutive_no_change} scrolls. Current: {current_count}, Target: {target_count}")
-                    
-                    # Final desperate attempt - try different scroll positions
-                    print("Attempting final scroll techniques...")
-                    for i in range(5):
-                        await page.evaluate(f'window.scrollTo(0, document.body.scrollHeight * {0.7 + i * 0.1})')
-                        await page.wait_for_timeout(3000)
-                        await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
-                        await page.wait_for_timeout(3000)
-                        
-                        new_cards = await page.query_selector_all('div.x9f619.x1r8uery.x1iyjqo2.x6ikm8r.x10wlt62.x1n2onr6')
-                        if len(new_cards) > current_count:
-                            print(f"Final technique worked! Found {len(new_cards)} cards")
-                            current_count = len(new_cards)
-                            consecutive_no_change = 0
+                    print("Trying YouTube-style fallback scroll...")
+                    used_fallback = True
+                    # --- YOUTUBE-STYLE FALLBACK ---
+                    fallback_no_new = 0
+                    fallback_last_count = current_count
+                    for fallback_scroll in range(50):
+                        await page.evaluate('window.scrollBy(0, 500)')
+                        await page.wait_for_timeout(1200)
+                        video_cards_fb = await page.query_selector_all('div.x9f619.x1r8uery.x1iyjqo2.x6ikm8r.x10wlt62.x1n2onr6')
+                        fb_count = len(video_cards_fb)
+                        print(f"[Fallback] Scroll {fallback_scroll+1}: {fb_count} cards loaded.")
+                        if fb_count == fallback_last_count:
+                            fallback_no_new += 1
+                        else:
+                            fallback_no_new = 0
+                        fallback_last_count = fb_count
+                        if fallback_no_new >= 10:
+                            print("[Fallback] No new cards after several scrolls. Stopping fallback.")
                             break
-                    
-                    if consecutive_no_change >= max_no_change * patience_multiplier:
-                        break
+                        if fb_count >= target_count:
+                            print(f"[Fallback] Target reached! Found {fb_count} cards.")
+                            break
+                    # After fallback, break out of main scroll loop
+                    break
             else:
                 consecutive_no_change = 0
                 last_count = current_count
@@ -380,11 +388,8 @@ class FacebookVideoScraper:
         
         # Final comprehensive wait for all content to load
         print("Final loading phase - waiting for all cards to populate...")
-        
-        # Wait for cards to have actual content
         for attempt in range(10):
             await page.wait_for_timeout(2000)
-            
             loaded_count = await page.evaluate('''
                 () => {
                     const cards = document.querySelectorAll('div.x9f619.x1r8uery.x1iyjqo2.x6ikm8r.x10wlt62.x1n2onr6');
@@ -397,18 +402,14 @@ class FacebookVideoScraper:
                     return loaded;
                 }
             ''')
-            
             print(f"Loading attempt {attempt + 1}: {loaded_count} cards have content")
-            
             # If most cards have content, we're good
+            current_count = len(await page.query_selector_all('div.x9f619.x1r8uery.x1iyjqo2.x6ikm8r.x10wlt62.x1n2onr6'))
             if loaded_count >= current_count * 0.7:  # 70% of cards have content
                 break
-        
         final_cards = await page.query_selector_all('div.x9f619.x1r8uery.x1iyjqo2.x6ikm8r.x10wlt62.x1n2onr6')
         final_count = len(final_cards)
-        
-        print(f"Final count: {final_count} video cards loaded")
-        
+        print(f"Final count: {final_count} video cards loaded" + (" (YouTube-style fallback used)" if used_fallback else ""))
         if final_count < target_count:
             print(f"⚠️  Only found {final_count} cards out of expected {target_count}")
             print("This could be due to:")
@@ -416,11 +417,9 @@ class FacebookVideoScraper:
             print("- Authentication requirements") 
             print("- Changed page structure")
             print("- Network issues")
-        
         return final_cards
 
     async def extract_video_info_from_card(self, card, card_index):
-        """Enhanced video info extraction with better error handling"""
         try:
             video_info = {
                 "url": None,
@@ -428,132 +427,44 @@ class FacebookVideoScraper:
                 "date": None,
                 "source_type": "video"
             }
-            
-            # Wait a moment for the card to be fully rendered
-            await card.wait_for_timeout(500)
-            
-            # Get card HTML for debugging
-            try:
-                card_html = await card.inner_html()
-                if len(card_html.strip()) < 100:  # Very minimal content
-                    print(f"DEBUG - Card {card_index}: Minimal content ({len(card_html)} chars)")
-            except:
-                card_html = "Unable to get HTML"
-            
-            # Enhanced URL extraction strategies
-            found_href = None
-            
-            # Strategy 1: Look for direct video links first
-            try:
-                video_links = await card.query_selector_all('a[href*="/videos/"]')
-                if video_links:
-                    href = await video_links[0].get_attribute('href')
-                    if href:
-                        found_href = href
-                        print(f"DEBUG - Card {card_index}: Found direct video link")
-            except:
-                pass
-            
-            # Strategy 2: Look for any Facebook links that might be videos
-            if not found_href:
-                try:
-                    all_links = await card.query_selector_all('a[href]')
-                    for link in all_links:
-                        href = await link.get_attribute('href')
-                        if href and any(pattern in href for pattern in ['/videos/', '/watch/', '/reel/']):
-                            found_href = href
-                            print(f"DEBUG - Card {card_index}: Found video-related link")
-                            break
-                except:
-                    pass
-            
-            # Strategy 3: Look for any meaningful links
-            if not found_href:
-                try:
-                    all_links = await card.query_selector_all('a[href]')
-                    for link in all_links:
-                        href = await link.get_attribute('href')
-                        if href and href not in ['#', 'javascript:void(0)'] and len(href) > 10:
-                            # Check if it's a Facebook post/content link
-                            if 'facebook.com' in href or href.startswith('/'):
-                                found_href = href
-                                break
-                except:
-                    pass
-            
-            # Format URL
-            if found_href:
-                if found_href.startswith('/'):
-                    video_info["url"] = f"https://www.facebook.com{found_href}"
-                elif found_href.startswith('http'):
-                    video_info["url"] = found_href
-                else:
-                    video_info["url"] = f"https://www.facebook.com/{found_href}"
-            
-            # Enhanced title extraction
-            title = None
-            
-            # Strategy 1: Look for aria-labels with meaningful content
-            try:
-                elements_with_aria = await card.query_selector_all('[aria-label]')
-                for element in elements_with_aria:
-                    aria_label = await element.get_attribute('aria-label')
-                    if aria_label and len(aria_label.strip()) > 15:
-                        # Skip common UI elements
-                        skip_words = ['like', 'share', 'comment', 'play', 'pause', 'video player']
-                        if not any(word in aria_label.lower() for word in skip_words):
-                            title = aria_label.strip()
-                            break
-            except:
-                pass
-            
-            # Strategy 2: Look for spans with substantial text content
-            if not title:
-                try:
-                    text_spans = await card.query_selector_all('span')
-                    longest_text = ""
-                    for span in text_spans:
-                        text = await span.text_content()
-                        if text and len(text.strip()) > len(longest_text) and len(text.strip()) > 15:
-                            # Skip if it's just numbers or common UI text
-                            if not text.strip().isdigit() and 'ago' not in text.lower():
-                                longest_text = text.strip()
-                    if longest_text:
-                        title = longest_text
-                except:
-                    pass
-            
-            # Strategy 3: Extract from any text content
-            if not title:
-                try:
-                    all_text = await card.text_content()
-                    if all_text:
-                        lines = [line.strip() for line in all_text.split('\n') if line.strip()]
-                        for line in lines:
-                            if len(line) > 20 and not line.isdigit():
-                                # Look for lines that seem like titles
-                                if any(word in line.lower() for word in ['meeting', 'county', 'commission', 'workshop', 'townhall']):
-                                    title = line
-                                    break
-                        # Fallback to longest line if no keyword match
-                        if not title and lines:
-                            title = max(lines, key=len)
-                except:
-                    pass
-            
-            # Fallback title
-            if not title:
-                title = "Facebook Video"
-            
-            video_info["title"] = title
-            
-            # Debug output for problematic cards
-            if not video_info["url"]:
+
+            await asyncio.sleep(0.5)
+
+            # 1. Find the <a> with the video link
+            link_elem = await card.query_selector('a[href*="/videos/"]')
+            if link_elem:
+                href = await link_elem.get_attribute('href')
+                if href:
+                    video_info["url"] = href
+
+                # 2. Find the <span> with the title/date inside the <a>
+                title_elem = await link_elem.query_selector('span.x1lliihq.x6ikm8r.x10wlt62.x1n2onr6')
+                if title_elem:
+                    title_text = (await title_elem.text_content() or '').strip()
+                    video_info["title"] = title_text
+                    # Try to extract date from the title using regex
+                    import re
+                    date_match = re.search(r'(\d{2}/\d{2}/\d{2,4})', title_text)
+                    if date_match:
+                        video_info["date"] = date_match.group(1)
+            # Fallback: try to find the <span> elsewhere in the card
+            if not video_info["title"]:
+                title_elem = await card.query_selector('span.x1lliihq.x6ikm8r.x10wlt62.x1n2onr6')
+                if title_elem:
+                    title_text = (await title_elem.text_content() or '').strip()
+                    video_info["title"] = title_text
+                    import re
+                    date_match = re.search(r'(\d{2}/\d{2}/\d{2,4})', title_text)
+                    if date_match:
+                        video_info["date"] = date_match.group(1)
+
+            # Only return if we have a valid URL
+            if video_info["url"]:
+                return video_info
+            else:
                 print(f"DEBUG - Card {card_index}: No URL found")
-                print(f"  └─ HTML preview: {card_html[:300]}...")
-            
-            return video_info
-            
+                return None
+
         except Exception as e:
             print(f"Error extracting video info from card {card_index}: {e}")
             return None
@@ -580,47 +491,87 @@ class FacebookVideoScraper:
             
             # Set viewport to ensure proper rendering
             await page.set_viewport_size({"width": 1366, "height": 768})
-            
+
+            # --- Load Facebook cookies if available ---
+            cookie_path = 'facebook_cookies.json'
+            if os.path.exists(cookie_path):
+                with open(cookie_path, 'r') as f:
+                    cookies = json.load(f)
+                # print("COOKIES TO BE ADDED:")
+                # print(json.dumps(cookies, indent=2))
+                try:
+                    await self.context.add_cookies(cookies)
+                    print("Loaded Facebook cookies for authentication.")
+                except Exception as e:
+                    print(f"Error adding cookies: {e}")
+                    print("Cookies passed:")
+                    print(json.dumps(cookies, indent=2))
+                    await page.close()
+                    return medias
+            else:
+                print("facebook_cookies.json not found. Proceeding without cookies.")
+
             print(f"Navigating to: {self.base_url}")
-            await page.goto(self.base_url, wait_until='networkidle', timeout=90000)
-            
-            # Wait for initial page load
+            nav_success = False
+            for attempt in range(3):
+                try:
+                    await page.goto(self.base_url, wait_until='domcontentloaded', timeout=90000)
+                    nav_success = True
+                    break
+                except Exception as e:
+                    print(f"[Retry {attempt+1}] Page.goto failed: {e}")
+                    await page.wait_for_timeout(4000)
+                    try:
+                        await page.reload(wait_until='domcontentloaded', timeout=90000)
+                        nav_success = True
+                        break
+                    except Exception as e2:
+                        print(f"[Retry {attempt+1}] Page.reload failed: {e2}")
+                        await page.wait_for_timeout(4000)
+            if not nav_success:
+                print("Failed to load Facebook page after retries. Skipping.")
+                await page.close()
+                return medias
+            # Wait extra for dynamic content
             await page.wait_for_timeout(8000)
-            
-            # Check for and handle common Facebook overlays
+            # Handle cookie consent
             try:
-                # Handle cookie consent
                 cookie_buttons = await page.query_selector_all('[data-testid="cookie-policy-manage-dialog"] button, [data-cookiebanner="accept_button"]')
                 if cookie_buttons:
                     await cookie_buttons[0].click()
                     await page.wait_for_timeout(2000)
                     print("Handled cookie consent")
-            except:
-                pass
-            
+            except Exception as e:
+                print(f"Cookie consent handling error: {e}")
+            # Check for login wall
+            try:
+                login_elements = await page.query_selector_all('#login_form, [data-testid="royal_login_form"]')
+                if login_elements:
+                    print("⚠️  Login form detected - Facebook may require authentication. Skipping this page.")
+                    await page.close()
+                    return medias
+            except Exception as e:
+                print(f"Login wall check error: {e}")
             # Verify main content is loaded
             try:
                 await page.wait_for_selector('[role="main"], div[data-pagelet="ProfileTimeline"]', timeout=15000)
                 print("Page main content detected")
             except:
                 print("Warning: Main content selector not found, proceeding anyway...")
-            
+            # Wait extra for dynamic content
+            await page.wait_for_timeout(5000)
             # Enhanced scroll and load - targeting 100 videos
             video_cards = await self.scroll_to_load_all_videos(page, target_count=100)
-            
             if not video_cards:
-                print("No video cards found.")
+                print("No video cards found after scrolling. Debugging page...")
                 await self.debug_facebook_page(page)
                 await page.close()
                 return medias
-            
             print(f"\nProcessing {len(video_cards)} video cards...")
-            
             # Process cards with better error handling
             for i, card in enumerate(video_cards):
                 try:
                     video_info = await self.extract_video_info_from_card(card, i+1)
-                    
                     if video_info and video_info["url"]:
                         if video_info["url"] not in seen_urls:
                             seen_urls.add(video_info["url"])
@@ -631,18 +582,14 @@ class FacebookVideoScraper:
                             print(f"× Skipped (duplicate): Card {i+1}")
                     else:
                         print(f"× Skipped card {i+1}: No valid URL found")
-                        
                 except Exception as e:
                     print(f"Error processing card {i+1}: {e}")
                     continue
-            
             await page.close()
-            
         except Exception as e:
             print(f"Error in scrape_facebook_videos: {e}")
             if 'page' in locals():
                 await page.close()
-        
         print(f"\nTotal Facebook videos found: {len(medias)}")
         return medias
 
