@@ -428,41 +428,49 @@ class FacebookVideoScraper:
                 "source_type": "video"
             }
 
-            await asyncio.sleep(0.5)
+            # Scroll card into view to trigger lazy loading
+            try:
+                await card.scroll_into_view_if_needed()
+            except Exception:
+                pass
 
-            # 1. Find the <a> with the video link
-            link_elem = await card.query_selector('a[href*="/videos/"]')
+            # Wait up to 10 seconds for the <a> tag to appear inside the card
+            link_elem = None
+            for _ in range(100):  # 100 x 0.1s = 10 seconds
+                link_elem = await card.query_selector('a[href*="/videos/"]')
+                if link_elem:
+                    break
+                await asyncio.sleep(0.1)
+
             if link_elem:
                 href = await link_elem.get_attribute('href')
                 if href:
                     video_info["url"] = href
 
-                # 2. Find the <span> with the title/date inside the <a>
-                title_elem = await link_elem.query_selector('span.x1lliihq.x6ikm8r.x10wlt62.x1n2onr6')
+                # Wait up to 5 seconds for the <span> tag to appear inside the <a>
+                title_elem = None
+                for _ in range(50):
+                    title_elem = await link_elem.query_selector('span.x1lliihq.x6ikm8r.x10wlt62.x1n2onr6')
+                    if title_elem:
+                        break
+                    await asyncio.sleep(0.1)
                 if title_elem:
                     title_text = (await title_elem.text_content() or '').strip()
                     video_info["title"] = title_text
-                    # Try to extract date from the title using regex
-                    import re
-                    date_match = re.search(r'(\d{2}/\d{2}/\d{2,4})', title_text)
-                    if date_match:
-                        video_info["date"] = date_match.group(1)
-            # Fallback: try to find the <span> elsewhere in the card
+
             if not video_info["title"]:
+                # Fallback: try to find the <span> elsewhere in the card
                 title_elem = await card.query_selector('span.x1lliihq.x6ikm8r.x10wlt62.x1n2onr6')
                 if title_elem:
                     title_text = (await title_elem.text_content() or '').strip()
                     video_info["title"] = title_text
-                    import re
-                    date_match = re.search(r'(\d{2}/\d{2}/\d{2,4})', title_text)
-                    if date_match:
-                        video_info["date"] = date_match.group(1)
 
-            # Only return if we have a valid URL
             if video_info["url"]:
                 return video_info
             else:
-                print(f"DEBUG - Card {card_index}: No URL found")
+                # For debugging: print the HTML of the card if no URL is found
+                card_html = await card.inner_html()
+                print(f"DEBUG - Card {card_index}: No URL found. Card HTML snippet: {card_html[:300]}")
                 return None
 
         except Exception as e:
@@ -569,8 +577,10 @@ class FacebookVideoScraper:
                 return medias
             print(f"\nProcessing {len(video_cards)} video cards...")
             # Process cards with better error handling
-            for i, card in enumerate(video_cards):
+            for i in range(len(video_cards)):
                 try:
+                    # Re-query the card handle by index to get the latest DOM node
+                    card = (await page.query_selector_all('div.x9f619.x1r8uery.x1iyjqo2.x6ikm8r.x10wlt62.x1n2onr6'))[i]
                     video_info = await self.extract_video_info_from_card(card, i+1)
                     if video_info and video_info["url"]:
                         if video_info["url"] not in seen_urls:
