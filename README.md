@@ -8,6 +8,9 @@ This repository provides a robust, modular system for scraping and downloading p
 - **Problem 1:** Scrape meeting metadata (title, date, link, etc.) from public video directories over a date range.
 - **Problem 2:** Extract direct, downloadable video URLs from meeting pages, verifying with `yt-dlp`.
 - **Bonus:** Download videos at high speed using `yt-dlp` with `aria2c` as an external downloader.
+- **Tricky Tasks Included:**
+  - Audio/video stream merging (e.g., IBM Video)
+  - Downloading m3u8 streams with custom headers/cookies (high-security sites)
 - Modular, reusable code ready for scale.
 - Outputs clean, structured JSON for easy database ingestion.
 
