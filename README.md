@@ -49,14 +49,7 @@ playwright install
 - [Charleston CivicClerk](https://charlestonwv.portal.civicclerk.com/) (**PDFs, fully implemented**)
 - [Winchester CivicWeb](https://winchesterva.civicweb.net/portal/) (**fully implemented: videos & documents**)
 
-**Winchester CivicWeb Scraper:**
-> The Winchester CivicWeb scraper is now fully implemented. It can scrape both video and document (agenda/minutes) links successfully, with proper date range filtering. For simplicity, Selenium is used instead of Playwright for this site. See the `WinchesterVAScraper` class in `scrapers.py`.
 
-**Facebook Scraper:**
-> The Facebook video scraper is implemented and can collect all video links and titles from the given public Facebook video page. **However, it cannot extract upload dates, so filtering by start and end date is not supported.**
-
-**PDF Scrapers:**
-> The Charleston CivicClerk and Winchester CivicWeb scrapers both scrape PDFs (such as agendas, packets, and minutes) from their respective websites.
 
 **Input Example:**
 ```json
@@ -120,6 +113,33 @@ playwright install
 ```bash
 python problem1.py
 ```
+
+---
+
+### 🏷️ Scraper Class Descriptions
+
+Below are short descriptions of each scraper class implemented in `scrapers.py`:
+
+- **DetroitScraper**
+  > Scrapes meeting videos from Detroit's Cablecast PublicSite. Navigates paginated video galleries, extracts video titles, URLs, and meeting dates, and filters results by a specified date range. Uses Playwright for browser automation.
+
+- **LansdaleScraper**
+  > Scrapes meeting videos from Lansdale's CivicMedia portal. Iterates through paginated video listings, collects video URLs and titles, and visits each video page to extract upload dates. Filters videos by date range. Uses Playwright for navigation and extraction.
+
+- **FacebookVideoScraper**
+  > Scrapes all video links and titles from a public Facebook video page. Aggressively scrolls and loads content to collect up to 100 videos. Note: Cannot extract upload dates, so date filtering is not supported. Uses Playwright for browser automation.
+
+- **CharlestonCivicClerkScraper**
+  > Scrapes published PDF files (such as agendas, packets, and minutes) from Charleston's CivicClerk portal via its public API. Iterates through paginated event data, collects file links, and filters by event date. Uses aiohttp for API requests.
+
+- **YouTubeLiveMeetingsScraper**
+  > Scrapes live meeting videos from a YouTube channel's streams page. Scrolls to load all video items, extracts video URLs and titles, and visits each video page to extract upload dates. Filters videos by date range. Uses Playwright for browser automation.
+
+- **RegionalWebTVScraper**
+  > Scrapes meeting videos from Regional Web TV. Detects and processes embedded iframes containing video listings, extracts video URLs, titles, and dates (parsed from titles), and filters by date range. Uses Playwright for navigation and extraction.
+
+- **WinchesterVAScraper**
+  > Scrapes both meeting documents (PDFs) and videos from Winchester's CivicWeb portal. Fetches meeting lists via API, then uses Selenium to extract agenda and video links from meeting detail pages. Filters results by date range. Uses requests and Selenium for scraping.
 
 ---
 
