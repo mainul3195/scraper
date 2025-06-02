@@ -19,11 +19,12 @@ This repository provides a robust, modular system for scraping and downloading p
 - [aria2c](https://aria2.github.io/)
 - [playwright](https://playwright.dev/python/) (`pip install playwright`)
 - [requests](https://pypi.org/project/requests/) (if used in Problem 1)
+- [selenium](https://pypi.org/project/selenium/) and [webdriver-manager](https://pypi.org/project/webdriver-manager/) (for Winchester CivicWeb)
 - Run `playwright install` after installing the package.
 
 Install dependencies:
 ```bash
-pip install yt-dlp playwright requests
+pip install yt-dlp playwright requests selenium webdriver-manager beautifulsoup4
 playwright install
 ```
 
@@ -43,21 +44,25 @@ playwright install
 - [Regional Web TV](https://www.regionalwebtv.com/fredcc) (**fully implemented**)
 - [Facebook Videos](https://www.facebook.com/DauphinCountyPA/videos) (**video scraping implemented, date filtering not supported**)
 - [Charleston CivicClerk](https://charlestonwv.portal.civicclerk.com/) (**PDFs, fully implemented**)
-- [Winchester CivicWeb](https://winchesterva.civicweb.net/portal/) (**PDF, not yet implemented**)
+- [Winchester CivicWeb](https://winchesterva.civicweb.net/portal/) (**fully implemented: videos & documents**)
+
+**Winchester CivicWeb Scraper:**
+> The Winchester CivicWeb scraper is now fully implemented. It can scrape both video and document (agenda/minutes) links successfully, with proper date range filtering. For simplicity, Selenium is used instead of Playwright for this site. See the `WinchesterVAScraper` class in `scrapers.py`.
 
 **Facebook Scraper:**
-> The Facebook video scraper is implemented and can collect all video links and titles from given public Facebook video page. **However, it cannot extract upload dates, so filtering by start and end date is not supported.**
+> The Facebook video scraper is implemented and can collect all video links and titles from the given public Facebook video page. **However, it cannot extract upload dates, so filtering by start and end date is not supported.**
 
 **PDF Scrapers:**
-> The Charleston CivicClerk scraper is now implemented and scrapes PDFs (such as agendas, packets, and minutes) from the Charleston CivicClerk website. Winchester CivicWeb PDF scraper is not yet implemented.
+> The Charleston CivicClerk and Winchester CivicWeb scrapers both scrape PDFs (such as agendas, packets, and minutes) from their respective websites.
 
 **Input Example:**
 ```json
 {
-    "start_date": "2025-05-25",
-    "end_date": "2025-06-01",
+    "start_date": "2025-05-28",
+    "end_date": "2025-06-02",
     "base_urls": [
-        "https://www.youtube.com/@SLCLiveMeetings/streams"
+        "https://charlestonwv.portal.civicclerk.com/",
+        "https://winchesterva.civicweb.net/portal/"
     ]
 }
 ```
@@ -66,19 +71,42 @@ playwright install
 ```json
 [
   {
-    "base_url": "https://www.youtube.com/@SLCLiveMeetings/streams",
+    "base_url": "https://charlestonwv.portal.civicclerk.com/",
     "medias": [
       {
-        "url": "https://www.youtube.com/watch?v=tesHDQKXv_s",
-        "title": "Salt Lake City Council Work Session - 05/29/2025",
-        "date": "2025-05-30",
+        "url": "https://charlestonwv.api.civicclerk.com/v1/Meetings/GetMeetingFileStream(fileId=7420,plainText=false)",
+        "title": "Firemen's Pension Board 5-29-2025 agenda",
+        "date": "2025-05-29",
+        "source_type": "pdf"
+      }
+    ]
+  },
+  {
+    "base_url": "https://winchesterva.civicweb.net/portal/",
+    "medias": [
+      {
+        "url": "https://winchesterva.civicweb.net/document/337470",
+        "title": "City Council - Strategic Planning Committee - 3:00 PM - Jun 02 2025",
+        "date": "2025-06-02",
+        "source_type": "document"
+      },
+      {
+        "url": "https://winchesterva.civicweb.net/document/337337",
+        "title": "City Council - Planning and Economic Development Committee - 1:00 PM - May 29 2025",
+        "date": "2025-05-29",
+        "source_type": "document"
+      },
+      {
+        "url": "https://winchesterva.new.swagit.com/videos/344309?ts=0",
+        "title": "City Council - Planning and Economic Development Committee - 1:00 PM - May 29 2025",
+        "date": "2025-05-29",
         "source_type": "video"
       },
       {
-        "url": "https://www.youtube.com/watch?v=SpjwumLsejM",
-        "title": "Planning Commission Meeting -- 05/28/2025",
-        "date": "2025-05-29",
-        "source_type": "video"
+        "url": "https://winchesterva.civicweb.net/document/337115",
+        "title": "Community Policy & Management Team - 3:00 PM - May 28 2025",
+        "date": "2025-05-28",
+        "source_type": "document"
       }
     ]
   }
@@ -183,7 +211,8 @@ python bonus.py
 - For best results, always use the latest version of `yt-dlp` and `aria2c`.
 - Some sites may require additional handling (e.g., login, cookies, or advanced scraping logic).
 - **Facebook video extraction can collect all video links and titles, but cannot extract upload dates, so filtering by date is not supported.**
-- **PDF scraping is only implemented for Charleston CivicClerk; Winchester CivicWeb is not yet implemented.**
+- **All 6 classes for test data in problem1.py are implemented and working, except for Facebook date extraction.**
+- **Both tricky tasks are also accomplished successfully.**
 - You can further automate the pipeline by combining the scripts or using a workflow manager.
 
 ---

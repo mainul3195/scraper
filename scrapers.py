@@ -7,6 +7,13 @@ import json
 import os
 import aiohttp
 from dateutil.tz import UTC
+import requests
+from bs4 import BeautifulSoup
+import time
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 
 class DetroitScraper:
     def __init__(self, context, start_date, end_date, base_urls):
@@ -1234,3 +1241,100 @@ class RegionalWebTVScraper:
                 
         except Exception as e:
             print(f"Error in debug_page_structure: {e}")
+
+# WinchesterVAScraper (for https://winchesterva.civicweb.net/portal/)
+class WinchesterVAScraper:
+    def __init__(self):
+        self.base_url = "https://winchesterva.civicweb.net"
+        self.headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "text/html",
+            "Referer": f"{self.base_url}/Portal/MeetingInformation.aspx",
+            "X-Requested-With": "XMLHttpRequest"
+        }
+
+    def fetch_meetings(self, from_date="2024-07-01", to_date="9999-12-31"):
+        """Fetch all meetings from the API within the specified date range."""
+        url = f"{self.base_url}/Services/MeetingsService.svc/meetings?from={from_date}&to={to_date}"
+        response = requests.get(url, headers=self.headers)
+        response.raise_for_status()
+        return response.json()
+
+    def fetch_meeting_details_with_selenium(self, meeting_id):
+        """Fetch detailed meeting information including agenda and video links using Selenium."""
+        url = f"{self.base_url}/Portal/MeetingInformation.aspx?Org=Cal&Id={meeting_id}"
+
+        # Configure headless Chrome browser
+        options = Options()
+        options.add_argument("--headless=new")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+
+        # Launch browser
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        driver.get(url)
+
+        # Allow time for JS to populate iframe
+        time.sleep(3)
+
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        driver.quit()
+
+        # Locate iframe with document link
+        iframe = soup.find("iframe", {"id": "ctl00_MainContent_MeetingDocument"})
+        agenda_src = iframe.get("src") if iframe else None
+        agenda_link = self.base_url + agenda_src if agenda_src else None
+
+        # Locate video link
+        video_link = None
+        for a in soup.find_all("a", href=True):
+            if "video" in a.text.lower() or "video" in a["href"].lower():
+                video_link = a["href"]
+                if not video_link.startswith("http"):
+                    video_link = self.base_url + video_link
+                break
+
+        return agenda_link, video_link
+
+    def scrape_meetings_to_json(self, start_date, end_date):
+        """Scrape meetings and return a list of media dicts (documents and videos)."""
+        meetings = self.fetch_meetings(from_date=start_date, to_date=end_date)
+        
+        medias = []
+        
+        for meeting in meetings:
+            meeting_id = meeting.get("Id")
+            name = meeting.get("Name")
+            date = meeting.get("MeetingDate")
+            
+            print(f"Processing: {date} - {name} (ID: {meeting_id})")
+            
+            agenda_link, video_link = self.fetch_meeting_details_with_selenium(meeting_id)
+            
+            # Add document if found
+            if agenda_link:
+                medias.append({
+                    "url": agenda_link,
+                    "title": name,
+                    "date": date,
+                    "source_type": "document"
+                })
+                print(f"  Found document: {agenda_link}")
+            
+            # Add video if found
+            if video_link:
+                medias.append({
+                    "url": video_link,
+                    "title": name,
+                    "date": date,
+                    "source_type": "video"
+                })
+                print(f"  Found video: {video_link}")
+            
+            if not agenda_link and not video_link:
+                print(f"  No media found for this meeting")
+            
+            print()
+        
+        return medias
